@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitpulse"
+dynamic = ["version"]
+description = "Terminal analytics for git repositories: contributors, hotspots, churn and activity heatmaps."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Dans-Vsa" }]
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+]
+keywords = ["git", "cli", "analytics", "statistics", "terminal"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+gitpulse = "gitpulse.cli:app"
+
+[tool.setuptools.dynamic]
+version = { attr = "gitpulse.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
