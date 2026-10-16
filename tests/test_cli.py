@@ -3,7 +3,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from gitpulse import __version__
+from gitpulse import __version__, cli
 from gitpulse.cli import app
 
 runner = CliRunner()
@@ -88,3 +88,70 @@ def test_summary_bad_revision(history_repo: Path):
     result = runner.invoke(app, ["summary", str(history_repo), "--rev", "nope"])
     assert result.exit_code == 1
     assert "error" in result.output
+
+
+def test_summary_author_and_path_filters(history_repo: Path):
+    args = ["summary", str(history_repo), "--json"]
+    alice = json.loads(runner.invoke(app, [*args, "--author", "alice"]).output)
+    assert alice["commits"] == 4 and alice["authors"] == 1
+    src = json.loads(runner.invoke(app, [*args, "--path", "src/"]).output)
+    assert src["commits"] == 2 and src["files_touched"] == 1
+    both = json.loads(runner.invoke(app, [*args, "-a", "alice", "-a", "bob"]).output)
+    assert both["commits"] == 7
+
+
+def test_authors_table(history_repo: Path):
+    result = runner.invoke(app, ["authors", str(history_repo)])
+    assert result.exit_code == 0, result.output
+    assert "Alice" in result.output and "Bob" in result.output
+    assert "57%" in result.output  # 4 of 7 commits
+    assert "aka" in result.output and "bob@example.com" in result.output
+    assert "example.com>" not in result.output  # emails hidden by default
+
+
+def test_authors_table_with_emails(history_repo: Path, monkeypatch):
+    # Widen the console so long emails are not wrapped mid-word.
+    monkeypatch.setattr(cli.console, "width", 160)
+    result = runner.invoke(app, ["authors", str(history_repo), "--emails"])
+    assert result.exit_code == 0, result.output
+    assert "<alice@example.com>" in result.output
+
+
+def test_authors_json(history_repo: Path):
+    result = runner.invoke(app, ["authors", str(history_repo), "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["commits"] == 7
+    assert data["total_authors"] == 2
+    assert [a["name"] for a in data["authors"]] == ["Alice", "Bob"]
+    assert data["authors"][1]["lines_deleted"] == 2
+
+
+def test_authors_top_sort_and_filters(history_repo: Path):
+    args = ["authors", str(history_repo), "--json"]
+    top = json.loads(runner.invoke(app, [*args, "--top", "1", "--sort", "deleted"]).output)
+    assert [a["name"] for a in top["authors"]] == ["Bob"]
+    assert top["total_authors"] == 2 and top["sort"] == "deleted"
+    src = json.loads(runner.invoke(app, [*args, "--path", "src/"]).output)
+    assert [(a["name"], a["commits"]) for a in src["authors"]] == [("Bob", 2)]
+    bob = json.loads(runner.invoke(app, [*args, "--author", "BOB"]).output)
+    assert bob["total_authors"] == 1
+
+
+def test_authors_top_note_in_table(history_repo: Path):
+    result = runner.invoke(app, ["authors", str(history_repo), "-n", "1"])
+    assert result.exit_code == 0, result.output
+    assert "Showing 1 of 2 authors" in result.output
+
+
+def test_authors_invalid_sort(history_repo: Path):
+    result = runner.invoke(app, ["authors", str(history_repo), "--sort", "karma"])
+    assert result.exit_code == 2
+    assert "--sort must be one of" in result.output
+
+
+def test_authors_empty_repo_and_outside_repo(empty_repo: Path, tmp_path: Path):
+    empty = runner.invoke(app, ["authors", str(empty_repo)])
+    assert empty.exit_code == 0 and "No commits found" in empty.output
+    outside = runner.invoke(app, ["authors", str(tmp_path / "nowhere")])
+    assert outside.exit_code == 1
