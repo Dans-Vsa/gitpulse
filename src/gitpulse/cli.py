@@ -8,10 +8,13 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
 
 from gitpulse import __version__
+from gitpulse.authors import SORT_KEYS, author_stats
+from gitpulse.filters import filter_by_author
 from gitpulse.git import GitError, find_repo_root, git_version, repo_info
 from gitpulse.history import LogOptions, read_commits
 from gitpulse.models import Commit
@@ -39,6 +42,24 @@ RevOption = Annotated[
     Optional[str],
     typer.Option("--rev", help="Branch, tag or revision range to read (default: HEAD)."),
 ]
+AuthorOption = Annotated[
+    Optional[list[str]],
+    typer.Option(
+        "--author",
+        "-a",
+        help="Only commits whose author name/email contains this text (repeatable).",
+    ),
+]
+PathOption = Annotated[
+    Optional[list[str]],
+    typer.Option(
+        "--path",
+        "-p",
+        help="Only changes under this path or git pathspec, e.g. src/ or '*.py' (repeatable).",
+    ),
+]
+NoMergesOption = Annotated[bool, typer.Option("--no-merges", help="Skip merge commits.")]
+JsonOption = Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")]
 
 
 def _version_callback(value: bool) -> None:
@@ -95,13 +116,16 @@ def doctor(path: RepoPath = Path(".")) -> None:
         console.print("[green]Ready.[/]")
 
 
-def _load_commits(path: Path, options: LogOptions) -> tuple[Path, list[Commit]]:
+def _load_commits(
+    path: Path, options: LogOptions, authors: list[str] | None = None
+) -> tuple[Path, list[Commit]]:
     try:
         root = find_repo_root(path)
-        return root, read_commits(root, options)
+        commits = read_commits(root, options)
     except GitError as exc:
         err_console.print(f"[bold red]error:[/] {exc}")
         raise typer.Exit(code=1) from exc
+    return root, filter_by_author(commits, authors)
 
 
 @app.command()
@@ -110,12 +134,16 @@ def summary(
     since: SinceOption = None,
     until: UntilOption = None,
     rev: RevOption = None,
-    no_merges: Annotated[bool, typer.Option("--no-merges", help="Skip merge commits.")] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")] = False,
+    author: AuthorOption = None,
+    paths: PathOption = None,
+    no_merges: NoMergesOption = False,
+    as_json: JsonOption = False,
 ) -> None:
     """Overview of the history: commits, authors, lines changed, active days."""
-    options = LogOptions(since=since, until=until, rev=rev, include_merges=not no_merges)
-    root, commits = _load_commits(path, options)
+    options = LogOptions(
+        since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
+    )
+    root, commits = _load_commits(path, options, author)
     s = summarize(commits)
 
     if as_json:
@@ -141,3 +169,93 @@ def summary(
     table.add_row("Busiest day", f"{s.busiest_day:{day}} ({s.busiest_day_commits} commits)")
     table.add_row("Top author", f"{s.top_author} ({s.top_author_commits} commits)")
     console.print(table)
+
+
+@app.command()
+def authors(
+    path: RepoPath = Path("."),
+    since: SinceOption = None,
+    until: UntilOption = None,
+    rev: RevOption = None,
+    author: AuthorOption = None,
+    paths: PathOption = None,
+    top: Annotated[
+        Optional[int], typer.Option("--top", "-n", min=1, help="Show only the first N authors.")
+    ] = None,
+    sort: Annotated[
+        str,
+        typer.Option(
+            "--sort", "-s", help=f"Sort by: {', '.join(SORT_KEYS)}.", case_sensitive=False
+        ),
+    ] = "commits",
+    emails: Annotated[bool, typer.Option("--emails", help="Show author emails.")] = False,
+    no_merges: NoMergesOption = False,
+    as_json: JsonOption = False,
+) -> None:
+    """Per-contributor stats: commits, share, lines, files, first/last commit."""
+    sort = sort.lower()
+    if sort not in SORT_KEYS:
+        err_console.print(f"[bold red]error:[/] --sort must be one of: {', '.join(SORT_KEYS)}")
+        raise typer.Exit(code=2)
+
+    options = LogOptions(
+        since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
+    )
+    root, commits = _load_commits(path, options, author)
+    all_authors = author_stats(commits, sort_by=sort)
+    shown = all_authors[:top] if top else all_authors
+
+    if as_json:
+        payload = {
+            "repository": str(root),
+            "commits": len(commits),
+            "total_authors": len(all_authors),
+            "sort": sort,
+            "authors": [a.to_dict() for a in shown],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not commits:
+        console.print(f"[yellow]No commits found in[/] {root}")
+        return
+
+    day = "%Y-%m-%d"
+    table = Table(
+        title=f"gitpulse · authors · {root.name}",
+        title_justify="left",
+        box=box.SIMPLE_HEAD,
+        show_edge=False,
+        padding=(0, 1, 0, 0),
+    )
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Author", style="bold", min_width=12)
+    table.add_column("Commits", justify="right")
+    table.add_column("%", justify="right")
+    table.add_column("+", justify="right", style="green")
+    table.add_column("-", justify="right", style="red")
+    table.add_column("Files", justify="right")
+    table.add_column("Days", justify="right")
+    table.add_column("First", justify="right", no_wrap=True)
+    table.add_column("Last", justify="right", no_wrap=True)
+    for rank, a in enumerate(shown, start=1):
+        label = a.name
+        if emails:
+            label += f" [dim]<{a.email}>[/]"
+        if a.aliases:
+            label += f"\n[dim]aka {', '.join(a.aliases)}[/]"
+        table.add_row(
+            str(rank),
+            label,
+            f"{a.commits:,}",
+            f"{a.share:.0%}",
+            f"{a.lines_added:,}",
+            f"{a.lines_deleted:,}",
+            f"{a.files_touched:,}",
+            f"{a.active_days:,}",
+            a.first_commit.strftime(day),
+            a.last_commit.strftime(day),
+        )
+    console.print(table)
+    if len(shown) < len(all_authors):
+        console.print(f"[dim]Showing {len(shown)} of {len(all_authors)} authors (--top).[/]")
