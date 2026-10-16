@@ -11,11 +11,21 @@ import typer
 from rich import box
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from gitpulse import __version__
 from gitpulse.authors import SORT_KEYS, author_stats
 from gitpulse.filters import filter_by_author
 from gitpulse.git import GitError, find_repo_root, git_version, repo_info
+from gitpulse.heatmap import (
+    WEEKDAYS,
+    Calendar,
+    build_calendar,
+    busiest_slot,
+    daily_counts,
+    level,
+    weekday_hour_grid,
+)
 from gitpulse.history import LogOptions, read_commits
 from gitpulse.hotspots import HOTSPOT_SORT_KEYS, dir_hotspots, file_hotspots
 from gitpulse.models import Commit
@@ -361,3 +371,135 @@ def hotspots(
     console.print(table)
     if len(shown) < len(spots):
         console.print(f"[dim]Showing {len(shown)} of {len(spots)} {kind} (--top).[/]")
+
+
+HEAT_GLYPHS = ("·", "░", "▒", "▓", "█")
+HEAT_STYLES = ("grey35", "green4", "green3", "green1", "bold bright_green")
+HEAT_VIEWS = ("both", "hours", "calendar")
+
+
+def _heat_cell(count: int, peak: int, width: int) -> Text:
+    lvl = level(count, peak)
+    return Text(HEAT_GLYPHS[lvl] * width, style=HEAT_STYLES[lvl])
+
+
+def _legend() -> Text:
+    text = Text("less ", style="dim")
+    for glyph, style in zip(HEAT_GLYPHS, HEAT_STYLES):
+        text.append(glyph * 2, style=style)
+        text.append(" ")
+    text.append("more", style="dim")
+    return text
+
+
+def _render_hours(grid: list[list[int]], utc: bool) -> None:
+    peak = max(max(row) for row in grid)
+    header = Text("    ")
+    for hour in range(0, 24, 3):
+        header.append(f"{hour:02d}".ljust(9), style="dim")
+    console.print(Text(f"Commits by weekday and hour ({'UTC' if utc else 'author local time'})",
+                       style="bold"))
+    console.print(header)
+    for wd, row in enumerate(grid):
+        line = Text(f"{WEEKDAYS[wd]} ", style="cyan")
+        for hour, count in enumerate(row):
+            if hour:
+                line.append(" ")
+            line.append_text(_heat_cell(count, peak, 2))
+        line.append(f" {sum(row):>3}", style="dim")
+        console.print(line, no_wrap=True, overflow="ignore", crop=False)
+
+
+def _render_calendar(cal: Calendar) -> None:
+    peak = cal.peak
+    console.print(
+        Text(f"Daily commits {cal.start:%Y-%m-%d} → {cal.end:%Y-%m-%d} ({cal.total:,} commits)",
+             style="bold")
+    )
+    months = Text("     ")
+    pending = ""
+    for label in cal.month_labels():
+        # Each week column is two characters wide; long labels spill into the next column.
+        pending = label or pending[2:]
+        months.append(pending[:2].ljust(2), style="dim")
+    console.print(months)
+    for wd in range(7):
+        line = Text(f"{WEEKDAYS[wd]}  " if wd % 2 == 0 else "     ", style="cyan")
+        for col in cal.weeks:
+            day = col[wd]
+            if day is None:
+                line.append("  ")
+            else:
+                line.append_text(_heat_cell(cal.counts[day], peak, 1))
+                line.append(" ")
+        console.print(line)
+
+
+@app.command()
+def heatmap(
+    path: RepoPath = Path("."),
+    since: SinceOption = None,
+    until: UntilOption = None,
+    rev: RevOption = None,
+    author: AuthorOption = None,
+    paths: PathOption = None,
+    view: Annotated[
+        str,
+        typer.Option("--view", help=f"What to draw: {', '.join(HEAT_VIEWS)}.", case_sensitive=False),
+    ] = "both",
+    weeks: Annotated[
+        int, typer.Option("--weeks", "-w", min=1, max=104, help="Calendar width in weeks.")
+    ] = 26,
+    utc: Annotated[bool, typer.Option("--utc", help="Use UTC instead of each author's clock.")] = False,
+    no_merges: NoMergesOption = False,
+    as_json: JsonOption = False,
+) -> None:
+    """When does work happen? Weekday × hour grid and a GitHub-style calendar."""
+    view = view.lower()
+    if view not in HEAT_VIEWS:
+        err_console.print(f"[bold red]error:[/] --view must be one of: {', '.join(HEAT_VIEWS)}")
+        raise typer.Exit(code=2)
+
+    options = LogOptions(
+        since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
+    )
+    root, commits = _load_commits(path, options, author)
+    grid = weekday_hour_grid(commits, utc=utc)
+    counts = daily_counts(commits, utc=utc)
+    end = max(counts) if counts else None
+    cal = build_calendar(counts, end, weeks) if end else None
+    slot = busiest_slot(grid)
+
+    if as_json:
+        payload = {
+            "repository": str(root),
+            "commits": len(commits),
+            "timezone": "utc" if utc else "author",
+            "weekdays": list(WEEKDAYS),
+            "hours": grid,
+            "busiest": (
+                {"weekday": WEEKDAYS[slot[0]], "hour": slot[1], "commits": slot[2]}
+                if slot else None
+            ),
+            "days": {d.isoformat(): n for d, n in sorted(counts.items())},
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not commits:
+        console.print(f"[yellow]No commits found in[/] {root}")
+        return
+
+    console.print(Text(f"gitpulse · heatmap · {root.name}", style="italic"))
+    if view in ("both", "hours"):
+        _render_hours(grid, utc)
+        console.print()
+    if view in ("both", "calendar") and cal:
+        _render_calendar(cal)
+        console.print()
+    console.print(_legend())
+    if slot:
+        wd, hour, n = slot
+        console.print(
+            f"Busiest slot: [bold]{WEEKDAYS[wd]} {hour:02d}:00–{hour:02d}:59[/] ({n} commits)"
+        )
