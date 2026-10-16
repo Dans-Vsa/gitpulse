@@ -4,7 +4,7 @@
 
 `gitpulse` wraps the `git` executable you already have, parses its history, and renders the results as rich terminal tables and heatmaps. No server, no account, no API keys.
 
-> Status: early development (v0.2.0). The roadmap below shows what works today.
+> Status: early development (v0.3.0). The roadmap below shows what works today.
 
 ## Features
 
@@ -12,12 +12,12 @@
 - [x] `gitpulse --version`
 - [x] `gitpulse summary` — commits, merges, authors, lines added/removed, active days, busiest day and top author, as a table or `--json`
 - [x] Robust history parser (`git log --numstat` with control-character separators): handles binary files, merges, Unicode names/paths and `.mailmap`
-- [ ] `gitpulse authors` — per-contributor stats with mailmap-style alias merging
+- [x] `gitpulse authors` — per-contributor commits, share, lines, files, active days and first/last commit; identities merged by email (case-insensitive) after `.mailmap`, with aliases shown; `--sort`, `--top`, `--emails`, `--json`
 - [ ] `gitpulse hotspots` — most-changed files and directories (churn), filterable by path
 - [ ] `gitpulse heatmap` — weekday × hour activity grid and a GitHub-style calendar
 - [ ] Export any report as JSON, CSV or Markdown
 - [x] History filters: `--since`, `--until`, `--rev` (branch, tag or range), `--no-merges`
-- [ ] More filters: `--author`, `--path`, `--top`
+- [x] More filters: `--author` (name/email substring, repeatable), `--path` (git pathspec, repeatable), `--top`
 
 ## Tech stack
 
@@ -54,7 +54,41 @@ gitpulse summary path/to/repo --since "3 months ago"
 gitpulse summary --since 2026-01-01 --until 2026-07-01 --no-merges
 gitpulse summary --rev main..feature              # only commits on a branch
 gitpulse summary --json > summary.json            # machine-readable
+gitpulse summary --author alice --path src/       # one person, one folder
+
+gitpulse authors                                  # everyone, most commits first
+gitpulse authors --top 5 --sort lines             # top 5 by lines changed
+gitpulse authors --since "6 months ago" --emails  # recent contributors with emails
+gitpulse authors --path docs/ -a bob -a carol     # who touched docs/, two people
+gitpulse authors --json > authors.json
 ```
+
+### `gitpulse authors`
+
+```
+gitpulse · authors · my-project
+#  Author        Commits    %       +      -  Files  Days       First        Last
+──────────────────────────────────────────────────────────────────────────────────
+1  Alice              84  62%  12,410  3,902    143    51  2026-03-02  2026-10-15
+   aka alice@old-laptop.local
+2  Bob                41  30%   5,077  1,236     88    27  2026-04-11  2026-10-14
+3  Carol              11   8%     690    214     19     9  2026-08-20  2026-10-01
+```
+
+- `--sort` accepts `commits` (default), `lines`, `added`, `deleted`, `files`, `first`, `last`, `name`.
+- Commits from the same email (ignoring case) are merged into one person; other names/emails used by that person are listed as `aka …`. For anything else, add a [`.mailmap`](https://git-scm.com/docs/gitmailmap) file to the repository — gitpulse respects it.
+- `--json` includes every author's aliases, share (0–1) and ISO 8601 first/last commit timestamps.
+
+### Filters (all report commands)
+
+| Option | Meaning |
+|--------|---------|
+| `--since`, `--until` | Date bounds, anything git understands (`2026-01-01`, `"2 weeks ago"`) |
+| `--rev` | Branch, tag or range such as `main..feature` (default `HEAD`) |
+| `--author`, `-a` | Author name or email contains this text, case-insensitive; repeat to OR |
+| `--path`, `-p` | Limit to a path or pathspec (`src/`, `'*.py'`); line counts only cover those paths |
+| `--no-merges` | Skip merge commits |
+| `--json` | Machine-readable output |
 
 ### `gitpulse summary`
 
@@ -107,15 +141,19 @@ The test suite builds small git repositories in temporary folders with fixed aut
 gitpulse/
 ├── src/gitpulse/
 │   ├── __init__.py     # package version
+│   ├── authors.py      # per-author aggregation, alias merging, sorting
 │   ├── __main__.py     # `python -m gitpulse`
-│   ├── cli.py          # Typer app and commands
+│   ├── cli.py          # Typer app, commands and shared filter options
+│   ├── filters.py      # post-parse filters (author matching)
 │   ├── git.py          # git subprocess wrapper, repo discovery, repo info
 │   ├── history.py      # `git log --numstat` runner/parser and LogOptions filters
 │   ├── models.py       # Commit / FileChange dataclasses
 │   └── stats.py        # Summary aggregation
 ├── tests/
 │   ├── conftest.py     # temporary repo fixtures (incl. a branch + merge history)
+│   ├── test_authors.py
 │   ├── test_cli.py
+│   ├── test_filters.py
 │   ├── test_git.py
 │   ├── test_history.py
 │   └── test_stats.py
