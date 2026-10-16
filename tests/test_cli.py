@@ -200,3 +200,42 @@ def test_hotspots_invalid_sort(history_repo: Path):
 def test_hotspots_empty_repo(empty_repo: Path):
     empty = runner.invoke(app, ["hotspots", str(empty_repo)])
     assert empty.exit_code == 0 and "No changes found" in empty.output
+
+
+def test_heatmap_renders_both_views(history_repo: Path):
+    result = runner.invoke(app, ["heatmap", str(history_repo)])
+    assert result.exit_code == 0, result.output
+    assert "Commits by weekday and hour (author local time)" in result.output
+    assert "Daily commits" in result.output and "(7 commits)" in result.output
+    assert "Busiest slot: Tue 11:00" in result.output
+    assert "less" in result.output and "more" in result.output
+
+
+def test_heatmap_single_views(history_repo: Path):
+    hours = runner.invoke(app, ["heatmap", str(history_repo), "--view", "hours", "--utc"])
+    assert "(UTC)" in hours.output and "Daily commits" not in hours.output
+    cal = runner.invoke(app, ["heatmap", str(history_repo), "--view", "calendar", "-w", "4"])
+    assert "Daily commits 2026-02-09" in cal.output and "weekday and hour" not in cal.output
+
+
+def test_heatmap_json(history_repo: Path):
+    result = runner.invoke(app, ["heatmap", str(history_repo), "--json", "--author", "alice"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["commits"] == 4
+    assert data["weekdays"][0] == "Mon"
+    assert sum(map(sum, data["hours"])) == 4
+    assert data["days"] == {"2026-03-01": 1, "2026-03-03": 1, "2026-03-04": 1, "2026-03-05": 1}
+    assert data["busiest"] == {"weekday": "Tue", "hour": 11, "commits": 1}
+
+
+def test_heatmap_invalid_view(history_repo: Path):
+    result = runner.invoke(app, ["heatmap", str(history_repo), "--view", "pie"])
+    assert result.exit_code == 2
+
+
+def test_heatmap_empty_repo(empty_repo: Path):
+    result = runner.invoke(app, ["heatmap", str(empty_repo)])
+    assert result.exit_code == 0 and "No commits found" in result.output
+    data = json.loads(runner.invoke(app, ["heatmap", str(empty_repo), "--json"]).output)
+    assert data["busiest"] is None and data["days"] == {}
