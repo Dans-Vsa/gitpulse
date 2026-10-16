@@ -155,3 +155,48 @@ def test_authors_empty_repo_and_outside_repo(empty_repo: Path, tmp_path: Path):
     assert empty.exit_code == 0 and "No commits found" in empty.output
     outside = runner.invoke(app, ["authors", str(tmp_path / "nowhere")])
     assert outside.exit_code == 1
+
+
+def test_hotspots_table(history_repo: Path):
+    result = runner.invoke(app, ["hotspots", str(history_repo)])
+    assert result.exit_code == 0, result.output
+    assert "hotspots (files)" in result.output
+    assert "README.md" in result.output and "src/app.py" in result.output
+    assert "(binary)" in result.output
+
+
+def test_hotspots_json_files_and_dirs(history_repo: Path):
+    args = ["hotspots", str(history_repo), "--json"]
+    files = json.loads(runner.invoke(app, args).output)
+    assert files["kind"] == "files" and files["total_files"] == 4
+    assert files["hotspots"][0] == {**files["hotspots"][0], "path": "README.md", "churn": 6}
+    dirs = json.loads(runner.invoke(app, [*args, "--depth", "1"]).output)
+    assert dirs["kind"] == "directories"
+    assert [h["path"] for h in dirs["hotspots"]] == [".", "src"]
+
+
+def test_hotspots_top_sort_and_filters(history_repo: Path):
+    args = ["hotspots", str(history_repo), "--json"]
+    top = json.loads(runner.invoke(app, [*args, "-n", "1", "--sort", "last"]).output)
+    assert [h["path"] for h in top["hotspots"]] == ["notes.txt"]
+    bob = json.loads(runner.invoke(app, [*args, "--author", "bob"]).output)
+    assert {h["path"] for h in bob["hotspots"]} == {"src/app.py", "logo.png"}
+    src = json.loads(runner.invoke(app, [*args, "--path", "src/"]).output)
+    assert [h["path"] for h in src["hotspots"]] == ["src/app.py"]
+
+
+def test_hotspots_directory_table_and_top_note(history_repo: Path):
+    result = runner.invoke(app, ["hotspots", str(history_repo), "-d", "1", "-n", "1"])
+    assert result.exit_code == 0, result.output
+    assert "Directory" in result.output
+    assert "Showing 1 of 2 directories" in result.output
+
+
+def test_hotspots_invalid_sort(history_repo: Path):
+    bad = runner.invoke(app, ["hotspots", str(history_repo), "--sort", "size"])
+    assert bad.exit_code == 2
+
+
+def test_hotspots_empty_repo(empty_repo: Path):
+    empty = runner.invoke(app, ["hotspots", str(empty_repo)])
+    assert empty.exit_code == 0 and "No changes found" in empty.output
