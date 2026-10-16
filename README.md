@@ -4,7 +4,7 @@
 
 `gitpulse` wraps the `git` executable you already have, parses its history, and renders the results as rich terminal tables and heatmaps. No server, no account, no API keys.
 
-> Status: early development (v0.3.0). The roadmap below shows what works today.
+> Status: early development (v0.4.0). The roadmap below shows what works today.
 
 ## Features
 
@@ -13,7 +13,7 @@
 - [x] `gitpulse summary` — commits, merges, authors, lines added/removed, active days, busiest day and top author, as a table or `--json`
 - [x] Robust history parser (`git log --numstat` with control-character separators): handles binary files, merges, Unicode names/paths and `.mailmap`
 - [x] `gitpulse authors` — per-contributor commits, share, lines, files, active days and first/last commit; identities merged by email (case-insensitive) after `.mailmap`, with aliases shown; `--sort`, `--top`, `--emails`, `--json`
-- [ ] `gitpulse hotspots` — most-changed files and directories (churn), filterable by path
+- [x] `gitpulse hotspots` — most-changed files, or directories with `--depth N`, ranked by churn (lines added + deleted) with commits, authors and last change; `--sort`, `--top`, `--json`
 - [ ] `gitpulse heatmap` — weekday × hour activity grid and a GitHub-style calendar
 - [ ] Export any report as JSON, CSV or Markdown
 - [x] History filters: `--since`, `--until`, `--rev` (branch, tag or range), `--no-merges`
@@ -61,7 +61,34 @@ gitpulse authors --top 5 --sort lines             # top 5 by lines changed
 gitpulse authors --since "6 months ago" --emails  # recent contributors with emails
 gitpulse authors --path docs/ -a bob -a carol     # who touched docs/, two people
 gitpulse authors --json > authors.json
+
+gitpulse hotspots                                 # top 20 files by churn
+gitpulse hotspots --depth 1                       # roll up to top-level folders
+gitpulse hotspots -d 2 --sort commits -n 10       # second-level folders by commit count
+gitpulse hotspots --path src/ --since "90 days ago"
 ```
+
+### `gitpulse hotspots`
+
+Output for this project's sibling repo `spendwise-api`:
+
+```
+gitpulse · hotspots (files) · spendwise-api
+#  File                     Churn          Commits  Authors        Last
+────────────────────────────────────────────────────────────────────────
+1  README.md                  465  ██████        9        1  2026-10-15
+2  tests/test_budgets.py      247  ███           2        1  2026-10-14
+3  tests/test_csv.py          235  ███           1        1  2026-10-14
+4  app/api/transactions.py    196  ███           2        1  2026-10-14
+5  app/services/csv_io.py     191  ██            1        1  2026-10-14
+Showing 5 of 66 files (--top).
+```
+
+- **Churn** = lines added + lines deleted. Files that are both big-churn and touched by many commits are usually the riskiest code to change.
+- `--depth N` groups files by their first N folders (`.` is the repository root); a commit that edits several files in one folder counts once for that folder.
+- `--sort` accepts `churn` (default), `commits`, `added`, `deleted`, `authors`, `last`, `path`.
+- Binary files are marked `(binary)`; they count as commits but add no churn.
+- `--json` adds `lines_added` / `lines_deleted` for every row.
 
 ### `gitpulse authors`
 
@@ -147,6 +174,7 @@ gitpulse/
 │   ├── filters.py      # post-parse filters (author matching)
 │   ├── git.py          # git subprocess wrapper, repo discovery, repo info
 │   ├── history.py      # `git log --numstat` runner/parser and LogOptions filters
+│   ├── hotspots.py     # per-file / per-directory churn aggregation
 │   ├── models.py       # Commit / FileChange dataclasses
 │   └── stats.py        # Summary aggregation
 ├── tests/
@@ -156,6 +184,7 @@ gitpulse/
 │   ├── test_filters.py
 │   ├── test_git.py
 │   ├── test_history.py
+│   ├── test_hotspots.py
 │   └── test_stats.py
 ├── pyproject.toml
 ├── LICENSE
