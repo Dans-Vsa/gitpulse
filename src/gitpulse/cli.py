@@ -17,6 +17,7 @@ from gitpulse.authors import SORT_KEYS, author_stats
 from gitpulse.filters import filter_by_author
 from gitpulse.git import GitError, find_repo_root, git_version, repo_info
 from gitpulse.history import LogOptions, read_commits
+from gitpulse.hotspots import HOTSPOT_SORT_KEYS, dir_hotspots, file_hotspots
 from gitpulse.models import Commit
 from gitpulse.stats import summarize
 
@@ -28,6 +29,7 @@ app = typer.Typer(
 )
 console = Console()
 err_console = Console(stderr=True)
+BAR_WIDTH = 6
 
 RepoPath = Annotated[
     Path,
@@ -259,3 +261,103 @@ def authors(
     console.print(table)
     if len(shown) < len(all_authors):
         console.print(f"[dim]Showing {len(shown)} of {len(all_authors)} authors (--top).[/]")
+
+
+@app.command()
+def hotspots(
+    path: RepoPath = Path("."),
+    since: SinceOption = None,
+    until: UntilOption = None,
+    rev: RevOption = None,
+    author: AuthorOption = None,
+    paths: PathOption = None,
+    depth: Annotated[
+        Optional[int],
+        typer.Option(
+            "--depth", "-d", min=1, help="Roll files up into directories N levels deep."
+        ),
+    ] = None,
+    top: Annotated[int, typer.Option("--top", "-n", min=1, help="How many rows to show.")] = 20,
+    sort: Annotated[
+        str,
+        typer.Option(
+            "--sort",
+            "-s",
+            help=f"Sort by: {', '.join(HOTSPOT_SORT_KEYS)}.",
+            case_sensitive=False,
+        ),
+    ] = "churn",
+    no_merges: NoMergesOption = False,
+    as_json: JsonOption = False,
+) -> None:
+    """Most-changed files (or directories with --depth): churn, commits, authors."""
+    sort = sort.lower()
+    if sort not in HOTSPOT_SORT_KEYS:
+        err_console.print(
+            f"[bold red]error:[/] --sort must be one of: {', '.join(HOTSPOT_SORT_KEYS)}"
+        )
+        raise typer.Exit(code=2)
+
+    options = LogOptions(
+        since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
+    )
+    root, commits = _load_commits(path, options, author)
+    if depth:
+        spots = dir_hotspots(commits, depth=depth, sort_by=sort)
+    else:
+        spots = file_hotspots(commits, sort_by=sort)
+    shown = spots[:top]
+    kind = "directories" if depth else "files"
+
+    if as_json:
+        payload = {
+            "repository": str(root),
+            "commits": len(commits),
+            "kind": kind,
+            "depth": depth,
+            "sort": sort,
+            f"total_{kind}": len(spots),
+            "hotspots": [s.to_dict() for s in shown],
+        }
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not spots:
+        console.print(f"[yellow]No changes found in[/] {root}")
+        return
+
+    max_churn = max(s.churn for s in shown) or 1
+    table = Table(
+        title=f"gitpulse · hotspots ({kind}) · {root.name}",
+        title_justify="left",
+        box=box.SIMPLE_HEAD,
+        show_edge=False,
+        padding=(0, 1, 0, 0),
+    )
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("Directory" if depth else "File", style="bold", min_width=20, overflow="fold")
+    table.add_column("Churn", justify="right")
+    table.add_column("", no_wrap=True, style="magenta", width=BAR_WIDTH)
+    table.add_column("Commits", justify="right")
+    table.add_column("Authors", justify="right")
+    if depth:
+        table.add_column("Files", justify="right")
+    table.add_column("Last", justify="right", no_wrap=True)
+    for rank, s in enumerate(shown, start=1):
+        bar = "█" * max(1, round(BAR_WIDTH * s.churn / max_churn)) if s.churn else ""
+        name = s.path + (" [dim](binary)[/]" if s.binary and not depth else "")
+        row = [
+            str(rank),
+            name,
+            f"{s.churn:,}",
+            bar,
+            f"{s.commits:,}",
+            f"{s.authors:,}",
+        ]
+        if depth:
+            row.append(f"{s.file_count:,}")
+        row.append(s.last_changed.strftime("%Y-%m-%d"))
+        table.add_row(*row)
+    console.print(table)
+    if len(shown) < len(spots):
+        console.print(f"[dim]Showing {len(shown)} of {len(spots)} {kind} (--top).[/]")
