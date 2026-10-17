@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/Dans-Vsa/gitpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/Dans-Vsa/gitpulse/actions/workflows/ci.yml)
 
-> Status: **v1.0.0** — all planned features are done. See [CHANGELOG.md](CHANGELOG.md).
+> Status: **v1.0.1** — all planned features are done. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 

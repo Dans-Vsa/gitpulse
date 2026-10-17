@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-10-17
+
+### Fixed
+- Python 3.10: commits made in UTC crashed the history parser because git prints
+  their dates with a `Z` suffix, which `datetime.fromisoformat` only accepts from
+  Python 3.11. Found by the new CI matrix.
+
 ## [1.0.0] - 2026-10-17
 
 ### Added
@@ -44,4 +51,5 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - Project scaffold, git wrapper, `gitpulse doctor` and `--version`.
 
+[1.0.1]: https://github.com/Dans-Vsa/gitpulse/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Dans-Vsa/gitpulse/releases/tag/v1.0.0
