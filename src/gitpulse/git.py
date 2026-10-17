@@ -13,6 +13,18 @@ class GitError(RuntimeError):
     """Raised when git is missing or a git command fails."""
 
 
+def parse_git_date(text: str) -> datetime:
+    """Parse a strict ISO 8601 date from git (``%aI``), including the ``Z`` suffix.
+
+    ``datetime.fromisoformat`` only understands ``Z`` from Python 3.11 on, and git
+    prints ``Z`` for commits made in UTC.
+    """
+    text = text.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
+
+
 def git_executable() -> str:
     """Return the path of the git binary or raise ``GitError``."""
     exe = shutil.which("git")
@@ -93,8 +105,8 @@ def repo_info(path: Path | str) -> RepoInfo:
     if has_commits:
         count = int(run_git(["rev-list", "--count", "HEAD"], cwd=root).strip())
         dates = run_git(["log", "--format=%aI", "HEAD"], cwd=root).split()
-        last = datetime.fromisoformat(dates[0])
-        first = datetime.fromisoformat(dates[-1])
+        last = parse_git_date(dates[0])
+        first = parse_git_date(dates[-1])
 
     return RepoInfo(
         root=root,

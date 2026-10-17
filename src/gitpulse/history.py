@@ -13,10 +13,9 @@ deletion plus one addition. That keeps per-path churn simple and exact.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
-from gitpulse.git import GitError, run_git
+from gitpulse.git import GitError, parse_git_date, run_git
 from gitpulse.models import Commit, FileChange
 
 RECORD_SEP = "\x1e"
@@ -87,7 +86,7 @@ def parse_log(raw: str) -> list[Commit]:
                 sha=sha,
                 author_name=name,
                 author_email=email,
-                authored_at=datetime.fromisoformat(date),
+                authored_at=parse_git_date(date),
                 subject=subject,
                 parents=tuple(parents.split()),
                 files=files,
