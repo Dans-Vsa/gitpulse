@@ -55,3 +55,16 @@ def test_repo_info_for_empty_repo(empty_repo: Path):
 def test_repo_info_reads_remote(sample_repo: Path):
     run_git(["remote", "add", "origin", "https://example.com/demo.git"], cwd=sample_repo)
     assert repo_info(sample_repo).remote_url == "https://example.com/demo.git"
+
+
+def test_parse_git_date_accepts_z_suffix_and_offsets():
+    from datetime import timedelta, timezone
+
+    from gitpulse.git import parse_git_date
+
+    utc = parse_git_date("2026-03-05T08:00:00Z")
+    assert utc.tzinfo is not None and utc.utcoffset() == timedelta(0)
+    assert utc == parse_git_date("2026-03-05T08:00:00+00:00")
+    jakarta = parse_git_date(" 2026-03-05T15:00:00+07:00\n")
+    assert jakarta.utcoffset() == timedelta(hours=7)
+    assert jakarta.astimezone(timezone.utc) == utc
