@@ -1,6 +1,9 @@
+import csv
+import io
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from gitpulse import __version__, cli
@@ -239,3 +242,54 @@ def test_heatmap_empty_repo(empty_repo: Path):
     assert result.exit_code == 0 and "No commits found" in result.output
     data = json.loads(runner.invoke(app, ["heatmap", str(empty_repo), "--json"]).output)
     assert data["busiest"] is None and data["days"] == {}
+
+
+@pytest.mark.parametrize("command", ["summary", "authors", "hotspots", "heatmap"])
+def test_every_report_exports_csv_and_markdown(history_repo: Path, command: str):
+    as_csv = runner.invoke(app, [command, str(history_repo), "--format", "csv"])
+    assert as_csv.exit_code == 0, as_csv.output
+    rows = list(csv.DictReader(io.StringIO(as_csv.output)))
+    assert rows
+    as_md = runner.invoke(app, [command, str(history_repo), "-f", "markdown"])
+    assert as_md.exit_code == 0, as_md.output
+    assert as_md.output.startswith(f"## gitpulse {command} - ")
+    assert "|---|" in as_md.output
+
+
+def test_format_json_matches_json_flag(history_repo: Path):
+    a = runner.invoke(app, ["authors", str(history_repo), "--json"]).output
+    b = runner.invoke(app, ["authors", str(history_repo), "--format", "JSON"]).output
+    assert json.loads(a) == json.loads(b)
+
+
+def test_csv_contents(history_repo: Path):
+    out = runner.invoke(app, ["hotspots", str(history_repo), "-f", "csv"]).output
+    rows = list(csv.DictReader(io.StringIO(out)))
+    assert rows[0]["path"] == "README.md" and rows[0]["churn"] == "6"
+    heat = runner.invoke(app, ["heatmap", str(history_repo), "-f", "csv"]).output
+    heat_rows = list(csv.DictReader(io.StringIO(heat)))
+    assert [r["weekday"] for r in heat_rows][:2] == ["Mon", "Tue"]
+    assert sum(int(r["total"]) for r in heat_rows) == 7
+    assert heat_rows[1]["11"] == "1"
+
+
+def test_output_file_infers_format_from_suffix(history_repo: Path, tmp_path: Path):
+    target = tmp_path / "reports" / "authors.csv"
+    result = runner.invoke(app, ["authors", str(history_repo), "--output", str(target)])
+    assert result.exit_code == 0, result.output
+    assert "Wrote csv report" in result.output
+    assert target.read_text(encoding="utf-8").startswith("name,email,aliases,commits")
+
+
+def test_output_file_with_explicit_format(history_repo: Path, tmp_path: Path):
+    target = tmp_path / "summary.txt"
+    result = runner.invoke(app, ["summary", str(history_repo), "-f", "json", "-o", str(target)])
+    assert result.exit_code == 0, result.output
+    assert json.loads(target.read_text(encoding="utf-8"))["commits"] == 7
+
+
+def test_output_file_unknown_suffix_and_bad_format(history_repo: Path, tmp_path: Path):
+    unknown = runner.invoke(app, ["summary", str(history_repo), "-o", str(tmp_path / "s.txt")])
+    assert unknown.exit_code == 2 and "cannot tell the format" in unknown.output
+    bad = runner.invoke(app, ["summary", str(history_repo), "--format", "xml"])
+    assert bad.exit_code == 2 and "--format must be one of" in bad.output
