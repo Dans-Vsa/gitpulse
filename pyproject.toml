@@ -16,6 +16,7 @@ dependencies = [
 ]
 keywords = ["git", "cli", "analytics", "statistics", "terminal"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Version Control :: Git",
