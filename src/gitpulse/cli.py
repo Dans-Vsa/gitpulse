@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Optional
@@ -15,6 +14,7 @@ from rich.text import Text
 
 from gitpulse import __version__
 from gitpulse.authors import SORT_KEYS, author_stats
+from gitpulse.export import FILE_FORMATS, FORMATS, guess_format, render
 from gitpulse.filters import filter_by_author
 from gitpulse.git import GitError, find_repo_root, git_version, repo_info
 from gitpulse.heatmap import (
@@ -40,6 +40,15 @@ app = typer.Typer(
 console = Console()
 err_console = Console(stderr=True)
 BAR_WIDTH = 6
+
+AUTHOR_COLUMNS = [
+    "name", "email", "aliases", "commits", "share", "merges", "lines_added",
+    "lines_deleted", "files_touched", "active_days", "first_commit", "last_commit",
+]
+HOTSPOT_COLUMNS = [
+    "path", "churn", "commits", "lines_added", "lines_deleted", "authors", "files",
+    "binary", "last_changed",
+]
 
 RepoPath = Annotated[
     Path,
@@ -71,7 +80,22 @@ PathOption = Annotated[
     ),
 ]
 NoMergesOption = Annotated[bool, typer.Option("--no-merges", help="Skip merge commits.")]
-JsonOption = Annotated[bool, typer.Option("--json", help="Print machine-readable JSON.")]
+JsonOption = Annotated[bool, typer.Option("--json", help="Shortcut for --format json.")]
+FormatOption = Annotated[
+    str,
+    typer.Option(
+        "--format",
+        "-f",
+        help=f"Output format: {', '.join(FORMATS)} (default: table, or from --output suffix).",
+        case_sensitive=False,
+    ),
+]
+OutputOption = Annotated[
+    Optional[Path],
+    typer.Option(
+        "--output", "-o", dir_okay=False, help="Write the report to this file instead of stdout."
+    ),
+]
 
 
 def _version_callback(value: bool) -> None:
@@ -128,6 +152,46 @@ def doctor(path: RepoPath = Path(".")) -> None:
         console.print("[green]Ready.[/]")
 
 
+def _resolve_format(as_json: bool, fmt: str, output: Path | None) -> str:
+    """Pick the output format from --json / --format / the --output suffix."""
+    fmt = "json" if as_json else fmt.lower()
+    if fmt not in FORMATS:
+        err_console.print(f"[bold red]error:[/] --format must be one of: {', '.join(FORMATS)}")
+        raise typer.Exit(code=2)
+    if output is not None and fmt == "table":
+        guessed = guess_format(output)
+        if guessed is None:
+            err_console.print(
+                f"[bold red]error:[/] cannot tell the format from {output.name!r}; "
+                f"pass --format {'|'.join(FILE_FORMATS)}"
+            )
+            raise typer.Exit(code=2)
+        fmt = guessed
+    return fmt
+
+
+def _emit(
+    fmt: str,
+    output: Path | None,
+    payload: dict,
+    columns: list[str],
+    rows: list[dict],
+    title: str,
+) -> None:
+    """Write a JSON/CSV/Markdown report to ``output`` or stdout."""
+    text = render(fmt, payload, columns, rows, title)
+    if output is None:
+        typer.echo(text, nl=False)
+        return
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text, encoding="utf-8", newline="")
+    except OSError as exc:
+        err_console.print(f"[bold red]error:[/] cannot write {output}: {exc}")
+        raise typer.Exit(code=1) from exc
+    err_console.print(f"[green]Wrote[/] {fmt} report to {output}")
+
+
 def _load_commits(
     path: Path, options: LogOptions, authors: list[str] | None = None
 ) -> tuple[Path, list[Commit]]:
@@ -150,16 +214,22 @@ def summary(
     paths: PathOption = None,
     no_merges: NoMergesOption = False,
     as_json: JsonOption = False,
+    fmt: FormatOption = "table",
+    output: OutputOption = None,
 ) -> None:
     """Overview of the history: commits, authors, lines changed, active days."""
     options = LogOptions(
         since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
     )
+    fmt = _resolve_format(as_json, fmt, output)
     root, commits = _load_commits(path, options, author)
     s = summarize(commits)
 
-    if as_json:
-        typer.echo(json.dumps({"repository": str(root), **s.to_dict()}, indent=2))
+    if fmt != "table":
+        data = s.to_dict()
+        rows = [{"metric": key, "value": value} for key, value in data.items()]
+        payload = {"repository": str(root), **data}
+        _emit(fmt, output, payload, ["metric", "value"], rows, f"gitpulse summary - {root.name}")
         return
 
     if s.commits == 0:
@@ -203,6 +273,8 @@ def authors(
     emails: Annotated[bool, typer.Option("--emails", help="Show author emails.")] = False,
     no_merges: NoMergesOption = False,
     as_json: JsonOption = False,
+    fmt: FormatOption = "table",
+    output: OutputOption = None,
 ) -> None:
     """Per-contributor stats: commits, share, lines, files, first/last commit."""
     sort = sort.lower()
@@ -213,19 +285,21 @@ def authors(
     options = LogOptions(
         since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
     )
+    fmt = _resolve_format(as_json, fmt, output)
     root, commits = _load_commits(path, options, author)
     all_authors = author_stats(commits, sort_by=sort)
     shown = all_authors[:top] if top else all_authors
 
-    if as_json:
+    if fmt != "table":
+        rows = [a.to_dict() for a in shown]
         payload = {
             "repository": str(root),
             "commits": len(commits),
             "total_authors": len(all_authors),
             "sort": sort,
-            "authors": [a.to_dict() for a in shown],
+            "authors": rows,
         }
-        typer.echo(json.dumps(payload, indent=2))
+        _emit(fmt, output, payload, AUTHOR_COLUMNS, rows, f"gitpulse authors - {root.name}")
         return
 
     if not commits:
@@ -299,6 +373,8 @@ def hotspots(
     ] = "churn",
     no_merges: NoMergesOption = False,
     as_json: JsonOption = False,
+    fmt: FormatOption = "table",
+    output: OutputOption = None,
 ) -> None:
     """Most-changed files (or directories with --depth): churn, commits, authors."""
     sort = sort.lower()
@@ -311,6 +387,7 @@ def hotspots(
     options = LogOptions(
         since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
     )
+    fmt = _resolve_format(as_json, fmt, output)
     root, commits = _load_commits(path, options, author)
     if depth:
         spots = dir_hotspots(commits, depth=depth, sort_by=sort)
@@ -319,7 +396,8 @@ def hotspots(
     shown = spots[:top]
     kind = "directories" if depth else "files"
 
-    if as_json:
+    if fmt != "table":
+        rows = [s.to_dict() for s in shown]
         payload = {
             "repository": str(root),
             "commits": len(commits),
@@ -327,9 +405,9 @@ def hotspots(
             "depth": depth,
             "sort": sort,
             f"total_{kind}": len(spots),
-            "hotspots": [s.to_dict() for s in shown],
+            "hotspots": rows,
         }
-        typer.echo(json.dumps(payload, indent=2))
+        _emit(fmt, output, payload, HOTSPOT_COLUMNS, rows, f"gitpulse hotspots - {root.name}")
         return
 
     if not spots:
@@ -453,6 +531,8 @@ def heatmap(
     utc: Annotated[bool, typer.Option("--utc", help="Use UTC instead of each author's clock.")] = False,
     no_merges: NoMergesOption = False,
     as_json: JsonOption = False,
+    fmt: FormatOption = "table",
+    output: OutputOption = None,
 ) -> None:
     """When does work happen? Weekday × hour grid and a GitHub-style calendar."""
     view = view.lower()
@@ -463,6 +543,7 @@ def heatmap(
     options = LogOptions(
         since=since, until=until, rev=rev, paths=tuple(paths or ()), include_merges=not no_merges
     )
+    fmt = _resolve_format(as_json, fmt, output)
     root, commits = _load_commits(path, options, author)
     grid = weekday_hour_grid(commits, utc=utc)
     counts = daily_counts(commits, utc=utc)
@@ -470,7 +551,12 @@ def heatmap(
     cal = build_calendar(counts, end, weeks) if end else None
     slot = busiest_slot(grid)
 
-    if as_json:
+    if fmt != "table":
+        hour_columns = [f"{h:02d}" for h in range(24)]
+        rows = [
+            {"weekday": WEEKDAYS[wd], **dict(zip(hour_columns, row)), "total": sum(row)}
+            for wd, row in enumerate(grid)
+        ]
         payload = {
             "repository": str(root),
             "commits": len(commits),
@@ -483,7 +569,8 @@ def heatmap(
             ),
             "days": {d.isoformat(): n for d, n in sorted(counts.items())},
         }
-        typer.echo(json.dumps(payload, indent=2))
+        columns = ["weekday", *hour_columns, "total"]
+        _emit(fmt, output, payload, columns, rows, f"gitpulse heatmap - {root.name}")
         return
 
     if not commits:
