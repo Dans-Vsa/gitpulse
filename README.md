@@ -4,7 +4,7 @@
 
 `gitpulse` wraps the `git` executable you already have, parses its history, and renders the results as rich terminal tables and heatmaps. No server, no account, no API keys.
 
-> Status: early development (v0.4.0). The roadmap below shows what works today.
+> Status: early development (v0.5.0). The roadmap below shows what works today.
 
 ## Features
 
@@ -14,7 +14,7 @@
 - [x] Robust history parser (`git log --numstat` with control-character separators): handles binary files, merges, Unicode names/paths and `.mailmap`
 - [x] `gitpulse authors` — per-contributor commits, share, lines, files, active days and first/last commit; identities merged by email (case-insensitive) after `.mailmap`, with aliases shown; `--sort`, `--top`, `--emails`, `--json`
 - [x] `gitpulse hotspots` — most-changed files, or directories with `--depth N`, ranked by churn (lines added + deleted) with commits, authors and last change; `--sort`, `--top`, `--json`
-- [ ] `gitpulse heatmap` — weekday × hour activity grid and a GitHub-style calendar
+- [x] `gitpulse heatmap` — weekday × hour activity grid and a GitHub-style calendar (`--view`, `--weeks`, `--utc`, `--json`), readable even without colors
 - [ ] Export any report as JSON, CSV or Markdown
 - [x] History filters: `--since`, `--until`, `--rev` (branch, tag or range), `--no-merges`
 - [x] More filters: `--author` (name/email substring, repeatable), `--path` (git pathspec, repeatable), `--top`
@@ -66,6 +66,10 @@ gitpulse hotspots                                 # top 20 files by churn
 gitpulse hotspots --depth 1                       # roll up to top-level folders
 gitpulse hotspots -d 2 --sort commits -n 10       # second-level folders by commit count
 gitpulse hotspots --path src/ --since "90 days ago"
+
+gitpulse heatmap                                  # hour grid + last 26 weeks
+gitpulse heatmap --view calendar --weeks 52       # one year of daily commits
+gitpulse heatmap --view hours --utc -a alice      # one person, on a shared clock
 ```
 
 ### `gitpulse hotspots`
@@ -141,6 +145,39 @@ Notes:
 - Renames are not followed: a moved file counts as one deletion plus one addition.
 - Binary files are listed as touched but add no line counts.
 
+### `gitpulse heatmap`
+
+```
+gitpulse · heatmap · spendwise-api
+Commits by weekday and hour (author local time)
+    00       03       06       09       12       15       18       21
+Mon ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ██ ·· ·· ·· ·· ·· ·· ··   7
+Tue ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ██ ·· ··   8
+Wed ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ██ ·· ·· ·· ·· ·· ·· ·· ··   8
+Thu ·· ·· ░░ ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ░░ ·· ··   3
+Fri ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ░░ ·· ·· ·· ·· ·· ·· ·· ·· ·· ░░ ··   2
+Sat ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ░░ ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ··   1
+Sun ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ·· ▒▒ ·· ·· ·· ·· ·· ·· ·· ·· ··   3
+
+Daily commits 2026-08-10 → 2026-10-15 (32 commits)
+     Aug     Sep     Oct
+Mon  · · · · · · · · · █
+     · · · · · · · · · █
+Wed  · · · · · · · · · █
+     · · · · · · · · ░ ░
+Fri  · · · · · · · · ░
+     · · · · · · · · ░
+Sun  · · · · · · · · ▒
+
+less ·· ░░ ▒▒ ▓▓ ██ more
+Busiest slot: Tue 21:00–21:59 (8 commits)
+```
+
+- Hours use each commit's **own timezone** by default ("when do people work?"); `--utc` puts everyone on one clock.
+- The calendar ends at the most recent commit in the selection, so old projects still show their last active months.
+- Shading uses 5 levels relative to the busiest cell (`·` = none … `█` = peak); colours are added in terminals that support them.
+- `--json` returns the 7 × 24 `hours` matrix (Monday first), commits per `days`, and the `busiest` slot.
+
 ### `gitpulse doctor`
 
 ```
@@ -173,6 +210,7 @@ gitpulse/
 │   ├── cli.py          # Typer app, commands and shared filter options
 │   ├── filters.py      # post-parse filters (author matching)
 │   ├── git.py          # git subprocess wrapper, repo discovery, repo info
+│   ├── heatmap.py      # weekday × hour grid, calendar layout, intensity levels
 │   ├── history.py      # `git log --numstat` runner/parser and LogOptions filters
 │   ├── hotspots.py     # per-file / per-directory churn aggregation
 │   ├── models.py       # Commit / FileChange dataclasses
@@ -183,6 +221,7 @@ gitpulse/
 │   ├── test_cli.py
 │   ├── test_filters.py
 │   ├── test_git.py
+│   ├── test_heatmap.py
 │   ├── test_history.py
 │   ├── test_hotspots.py
 │   └── test_stats.py
