@@ -4,7 +4,9 @@
 
 `gitpulse` wraps the `git` executable you already have, parses its history, and renders the results as rich terminal tables and heatmaps. No server, no account, no API keys.
 
-> Status: early development (v0.5.0). The roadmap below shows what works today.
+[![CI](https://github.com/Dans-Vsa/gitpulse/actions/workflows/ci.yml/badge.svg)](https://github.com/Dans-Vsa/gitpulse/actions/workflows/ci.yml)
+
+> Status: **v1.0.0** — all planned features are done. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
@@ -15,7 +17,7 @@
 - [x] `gitpulse authors` — per-contributor commits, share, lines, files, active days and first/last commit; identities merged by email (case-insensitive) after `.mailmap`, with aliases shown; `--sort`, `--top`, `--emails`, `--json`
 - [x] `gitpulse hotspots` — most-changed files, or directories with `--depth N`, ranked by churn (lines added + deleted) with commits, authors and last change; `--sort`, `--top`, `--json`
 - [x] `gitpulse heatmap` — weekday × hour activity grid and a GitHub-style calendar (`--view`, `--weeks`, `--utc`, `--json`), readable even without colors
-- [ ] Export any report as JSON, CSV or Markdown
+- [x] Export any report as JSON, CSV or Markdown (`--format`), straight to a file with `--output` (format inferred from `.json` / `.csv` / `.md`)
 - [x] History filters: `--since`, `--until`, `--rev` (branch, tag or range), `--no-merges`
 - [x] More filters: `--author` (name/email substring, repeatable), `--path` (git pathspec, repeatable), `--top`
 
@@ -28,6 +30,7 @@
 | Output    | [Rich](https://rich.readthedocs.io/)        |
 | Data      | the local `git` binary (via `subprocess`)   |
 | Tests     | pytest, with throwaway git repos as fixtures |
+| CI        | GitHub Actions (Linux + Windows, Python 3.10–3.13) |
 
 ## Installation
 
@@ -70,56 +73,9 @@ gitpulse hotspots --path src/ --since "90 days ago"
 gitpulse heatmap                                  # hour grid + last 26 weeks
 gitpulse heatmap --view calendar --weeks 52       # one year of daily commits
 gitpulse heatmap --view hours --utc -a alice      # one person, on a shared clock
+
+gitpulse authors -f csv -o authors.csv            # export any report
 ```
-
-### `gitpulse hotspots`
-
-Output for this project's sibling repo `spendwise-api`:
-
-```
-gitpulse · hotspots (files) · spendwise-api
-#  File                     Churn          Commits  Authors        Last
-────────────────────────────────────────────────────────────────────────
-1  README.md                  465  ██████        9        1  2026-10-15
-2  tests/test_budgets.py      247  ███           2        1  2026-10-14
-3  tests/test_csv.py          235  ███           1        1  2026-10-14
-4  app/api/transactions.py    196  ███           2        1  2026-10-14
-5  app/services/csv_io.py     191  ██            1        1  2026-10-14
-Showing 5 of 66 files (--top).
-```
-
-- **Churn** = lines added + lines deleted. Files that are both big-churn and touched by many commits are usually the riskiest code to change.
-- `--depth N` groups files by their first N folders (`.` is the repository root); a commit that edits several files in one folder counts once for that folder.
-- `--sort` accepts `churn` (default), `commits`, `added`, `deleted`, `authors`, `last`, `path`.
-- Binary files are marked `(binary)`; they count as commits but add no churn.
-- `--json` adds `lines_added` / `lines_deleted` for every row.
-
-### `gitpulse authors`
-
-```
-gitpulse · authors · my-project
-#  Author        Commits    %       +      -  Files  Days       First        Last
-──────────────────────────────────────────────────────────────────────────────────
-1  Alice              84  62%  12,410  3,902    143    51  2026-03-02  2026-10-15
-   aka alice@old-laptop.local
-2  Bob                41  30%   5,077  1,236     88    27  2026-04-11  2026-10-14
-3  Carol              11   8%     690    214     19     9  2026-08-20  2026-10-01
-```
-
-- `--sort` accepts `commits` (default), `lines`, `added`, `deleted`, `files`, `first`, `last`, `name`.
-- Commits from the same email (ignoring case) are merged into one person; other names/emails used by that person are listed as `aka …`. For anything else, add a [`.mailmap`](https://git-scm.com/docs/gitmailmap) file to the repository — gitpulse respects it.
-- `--json` includes every author's aliases, share (0–1) and ISO 8601 first/last commit timestamps.
-
-### Filters (all report commands)
-
-| Option | Meaning |
-|--------|---------|
-| `--since`, `--until` | Date bounds, anything git understands (`2026-01-01`, `"2 weeks ago"`) |
-| `--rev` | Branch, tag or range such as `main..feature` (default `HEAD`) |
-| `--author`, `-a` | Author name or email contains this text, case-insensitive; repeat to OR |
-| `--path`, `-p` | Limit to a path or pathspec (`src/`, `'*.py'`); line counts only cover those paths |
-| `--no-merges` | Skip merge commits |
-| `--json` | Machine-readable output |
 
 ### `gitpulse summary`
 
@@ -144,6 +100,44 @@ Notes:
 - Authors are counted by email, case-insensitively, after applying the repository's `.mailmap`.
 - Renames are not followed: a moved file counts as one deletion plus one addition.
 - Binary files are listed as touched but add no line counts.
+
+### `gitpulse authors`
+
+```
+gitpulse · authors · my-project
+#  Author        Commits    %       +      -  Files  Days       First        Last
+──────────────────────────────────────────────────────────────────────────────────
+1  Alice              84  62%  12,410  3,902    143    51  2026-03-02  2026-10-15
+   aka alice@old-laptop.local
+2  Bob                41  30%   5,077  1,236     88    27  2026-04-11  2026-10-14
+3  Carol              11   8%     690    214     19     9  2026-08-20  2026-10-01
+```
+
+- `--sort` accepts `commits` (default), `lines`, `added`, `deleted`, `files`, `first`, `last`, `name`.
+- Commits from the same email (ignoring case) are merged into one person; other names/emails used by that person are listed as `aka …`. For anything else, add a [`.mailmap`](https://git-scm.com/docs/gitmailmap) file to the repository — gitpulse respects it.
+- `--json` includes every author's aliases, share (0–1) and ISO 8601 first/last commit timestamps.
+
+### `gitpulse hotspots`
+
+Output for this project's sibling repo `spendwise-api`:
+
+```
+gitpulse · hotspots (files) · spendwise-api
+#  File                     Churn          Commits  Authors        Last
+────────────────────────────────────────────────────────────────────────
+1  README.md                  465  ██████        9        1  2026-10-15
+2  tests/test_budgets.py      247  ███           2        1  2026-10-14
+3  tests/test_csv.py          235  ███           1        1  2026-10-14
+4  app/api/transactions.py    196  ███           2        1  2026-10-14
+5  app/services/csv_io.py     191  ██            1        1  2026-10-14
+Showing 5 of 66 files (--top).
+```
+
+- **Churn** = lines added + lines deleted. Files that are both big-churn and touched by many commits are usually the riskiest code to change.
+- `--depth N` groups files by their first N folders (`.` is the repository root); a commit that edits several files in one folder counts once for that folder.
+- `--sort` accepts `churn` (default), `commits`, `added`, `deleted`, `authors`, `last`, `path`.
+- Binary files are marked `(binary)`; they count as commits but add no churn.
+- `--json` adds `lines_added` / `lines_deleted` for every row.
 
 ### `gitpulse heatmap`
 
@@ -178,6 +172,35 @@ Busiest slot: Tue 21:00–21:59 (8 commits)
 - Shading uses 5 levels relative to the busiest cell (`·` = none … `█` = peak); colours are added in terminals that support them.
 - `--json` returns the 7 × 24 `hours` matrix (Monday first), commits per `days`, and the `busiest` slot.
 
+### Filters (all report commands)
+
+| Option | Meaning |
+|--------|---------|
+| `--since`, `--until` | Date bounds, anything git understands (`2026-01-01`, `"2 weeks ago"`) |
+| `--rev` | Branch, tag or range such as `main..feature` (default `HEAD`) |
+| `--author`, `-a` | Author name or email contains this text, case-insensitive; repeat to OR |
+| `--path`, `-p` | Limit to a path or pathspec (`src/`, `'*.py'`); line counts only cover those paths |
+| `--no-merges` | Skip merge commits |
+| `--json` | Machine-readable output |
+
+### Export (all report commands)
+
+```bash
+gitpulse authors --format csv > authors.csv
+gitpulse hotspots -d 1 -f markdown >> REPORT.md
+gitpulse summary --output reports/summary.json   # format from the suffix
+gitpulse heatmap -f csv -o heat.txt              # explicit format, any file name
+```
+
+| Format | What you get |
+|--------|--------------|
+| `table` | Rich terminal output (default) |
+| `json` | The full nested report (same as `--json`) |
+| `csv` | One flat table: summary → `metric,value`; authors / hotspots → one row each; heatmap → weekday × hour |
+| `markdown` | The same flat table as a GitHub-flavoured Markdown table with a `##` heading |
+
+`--output` creates missing folders and prints `Wrote <format> report to <file>` on stderr.
+
 ### `gitpulse doctor`
 
 ```
@@ -208,6 +231,7 @@ gitpulse/
 │   ├── authors.py      # per-author aggregation, alias merging, sorting
 │   ├── __main__.py     # `python -m gitpulse`
 │   ├── cli.py          # Typer app, commands and shared filter options
+│   ├── export.py       # JSON / CSV / Markdown rendering
 │   ├── filters.py      # post-parse filters (author matching)
 │   ├── git.py          # git subprocess wrapper, repo discovery, repo info
 │   ├── heatmap.py      # weekday × hour grid, calendar layout, intensity levels
@@ -219,12 +243,15 @@ gitpulse/
 │   ├── conftest.py     # temporary repo fixtures (incl. a branch + merge history)
 │   ├── test_authors.py
 │   ├── test_cli.py
+│   ├── test_export.py
 │   ├── test_filters.py
 │   ├── test_git.py
 │   ├── test_heatmap.py
 │   ├── test_history.py
 │   ├── test_hotspots.py
 │   └── test_stats.py
+├── .github/workflows/ci.yml
+├── CHANGELOG.md
 ├── pyproject.toml
 ├── LICENSE
 └── README.md
